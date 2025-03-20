@@ -1,3 +1,12 @@
 GST_TRACERS="interlatency" GST_DEBUG="GST_TRACER:7" gst-launch-1.0 filesrc location=/home/kotiko/Downloads/test.mp4 ! decodebin ! autovideosink 2> gstshark_latency.log
 
 I can write trhis whole thing in c using multiu threading and some dependecies that should be installed
+
+we can make program with commadn line argumetn -track {options} -file {source} -out {log file}
+
+make piplein into configruable argumnet
+
+
+for next week 
+
+static features zoom and zoom out visual represeantion and one of the dynamic features tracking
