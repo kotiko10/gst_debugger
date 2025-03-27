@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Real-time Log Viewer</title>
+</head>
+<body>
+  <h1>Real-time GStreamer Log Viewer</h1>
+  <pre id="logOutput"></pre>
+
+  <script>
+    const logOutput = document.getElementById('logOutput');
+    const socket = new WebSocket('ws://localhost:3000');
+    
+    // Append new data to the log output in real-time
+    socket.onmessage = (event) => {
+      logOutput.textContent += event.data;
+      logOutput.scrollTop = logOutput.scrollHeight; // Scroll to the bottom
+    };
+  </script>
+</body>
+</html>
