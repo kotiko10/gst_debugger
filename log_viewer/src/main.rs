@@ -200,7 +200,7 @@ async fn run_pipeline_with_tracing(pipeline: String, tracing: String, tx: mpsc::
 /// Extract bitrate/framerate data from GstTracer logs
 fn parse_gst_tracer_output(line: &str) -> Option<TracingData> {
     let bitrate_re = Regex::new(r"bitrate.*pad=\(string\)(\S+), bitrate=\(guint64\)(\d+);").ok()?;
-    let framerate_re = Regex::new(r"framerate.*pad=\(string\)(\S+), framerate=\(double\)(\d+\.\d+);").ok()?;
+    let framerate_re = Regex::new(r"framerate.*pad=\(string\)(\S+), fps=\(uint\)(\d+);").ok()?;
 
     if let Some(caps) = bitrate_re.captures(line) {
         return Some(TracingData {
