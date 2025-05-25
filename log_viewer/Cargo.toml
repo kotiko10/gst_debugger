@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 gstreamer = "0.21"
+chrono = "0.4"
 eframe = "0.26"
 egui = "0.26"
 tokio = { version = "1", features = ["full"] }

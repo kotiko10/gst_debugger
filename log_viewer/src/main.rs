@@ -6,8 +6,10 @@ use clap::Parser;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::task;
+use tokio::fs::OpenOptions;
+use chrono::Local;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use regex::Regex;
 
 #[derive(Debug, Clone)]
@@ -255,7 +257,20 @@ async fn run_pipeline_with_tracing(
     let reader = BufReader::new(stderr);
     let mut lines = reader.lines();
 
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let filename = format!("tracer_output_{}.log", timestamp);
+
+  let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&filename)
+        .await
+        .expect("Failed to open tracer log file");
+
     while let Ok(Some(line)) = lines.next_line().await {
+        // Write line to file with newline
+        let _ = file.write_all(format!("{}\n", line).as_bytes()).await;
+
         if let Some(entry) = parse_gst_tracer_output(&line) {
             let _ = tx.send(entry).await;
         } else if let Some(latency) = parse_interlatency(&line) {
