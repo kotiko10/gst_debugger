@@ -9,9 +9,7 @@ use tokio::task;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use regex::Regex;
-//button for refreshin, adding latency and filiter data and complete thresholds, GUI and background constrast
-//start testing using diffreent eleemtnsand measurments
-/// Struct for real-time tracing data
+
 #[derive(Debug, Clone)]
 struct TracingData {
     element: String,
@@ -19,7 +17,6 @@ struct TracingData {
     framerate: Option<f64>,
 }
 
-/// Interlatency between two elements
 #[derive(Debug, Clone)]
 struct InterLatencyData {
     from: String,
@@ -27,20 +24,16 @@ struct InterLatencyData {
     time: String,
 }
 
-/// CLI Arguments
 #[derive(Parser, Debug)]
 #[command(name = "gst_debugger")]
 struct Args {
-    /// GStreamer pipeline string
     #[arg(short, long)]
     pipeline: String,
 
-    /// Tracing types (e.g., "bitrate;framerate;interlatency")
     #[arg(short, long)]
     tracing: String,
 }
 
-/// GUI state with drag positions
 struct GstDebugger {
     logs: Arc<Mutex<Vec<TracingData>>>,
     interlatency: Arc<Mutex<Vec<InterLatencyData>>>,
@@ -49,6 +42,9 @@ struct GstDebugger {
     receiver: mpsc::Receiver<TracingData>,
     latency_receiver: mpsc::Receiver<InterLatencyData>,
     positions: HashMap<NodeIndex, egui::Pos2>,
+    bitrate_threshold: u64,
+    framerate_threshold: f64,
+    latency_threshold_ns: u64,
 }
 
 impl GstDebugger {
@@ -86,6 +82,9 @@ impl GstDebugger {
             receiver,
             latency_receiver,
             positions,
+            bitrate_threshold: 0,
+            framerate_threshold: 0.0,
+            latency_threshold_ns: 0,
         }
     }
 }
@@ -100,85 +99,112 @@ impl eframe::App for GstDebugger {
             self.interlatency.lock().unwrap().push(lat);
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("GStreamer Visual Debugger");
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().fill(egui::Color32::from_gray(30)))
+            .show(ctx, |ui| {
+                ui.heading("GStreamer Visual Debugger");
 
-            let logs = self.logs.lock().unwrap();
-            let inter = self.interlatency.lock().unwrap();
+                if ui.button("🔄 Refresh").clicked() {
+                    self.logs.lock().unwrap().clear();
+                    self.interlatency.lock().unwrap().clear();
+                }
 
-            let node_size = 120.0;
-            let node_height = 70.0;
+                ui.horizontal(|ui| {
+                    ui.label("Min Bitrate:");
+                    ui.add(egui::Slider::new(&mut self.bitrate_threshold, 0..=10_000_000));
+                    ui.label("Min Framerate:");
+                    ui.add(egui::Slider::new(&mut self.framerate_threshold, 0.0..=120.0));
+                    ui.label("Max Latency (ns):");
+                    ui.add(egui::Slider::new(&mut self.latency_threshold_ns, 0..=1_000_000));
+                });
 
-            for edge in self.graph.edge_indices() {
-                let (start, end) = self.graph.edge_endpoints(edge).unwrap();
-                let start_pos = self.positions[&start];
-                let end_pos = self.positions[&end];
+                let logs = self.logs.lock().unwrap();
+                let inter = self.interlatency.lock().unwrap();
 
-                ui.painter().line_segment(
-                    [
-                        egui::pos2(start_pos.x + node_size, start_pos.y + node_height / 2.0),
-                        egui::pos2(end_pos.x, end_pos.y + node_height / 2.0),
-                    ],
-                    egui::Stroke::new(2.0, egui::Color32::WHITE),
-                );
+                let node_size = 120.0;
+                let node_height = 70.0;
 
-                let from_name = &self.graph[start];
-                let to_name = &self.graph[end];
+                for edge in self.graph.edge_indices() {
+                    let (start, end) = self.graph.edge_endpoints(edge).unwrap();
+                    let start_pos = self.positions[&start];
+                    let end_pos = self.positions[&end];
 
-                if let Some(latency) = inter.iter().rev().find(|lat| {
-                    lat.from.starts_with(from_name) && lat.to.starts_with(to_name)
-                }) {
-                    let label_pos = egui::pos2((start_pos.x + end_pos.x) / 2.0, start_pos.y - 10.0);
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(start_pos.x + node_size, start_pos.y + node_height / 2.0),
+                            egui::pos2(end_pos.x, end_pos.y + node_height / 2.0),
+                        ],
+                        egui::Stroke::new(2.0, egui::Color32::WHITE),
+                    );
+
+                    let from_name = &self.graph[start];
+                    let to_name = &self.graph[end];
+                    
+
+                    if let Some(latency) = inter.iter().rev().find(|lat| {
+                        lat.from.starts_with(to_name)
+                    }) {
+                        let latency_val = latency.time.parse::<u64>().unwrap_or(0);
+                        let color = if latency_val > self.latency_threshold_ns {
+                            egui::Color32::RED
+                        } else {
+                            egui::Color32::YELLOW
+                        };
+                        let label_pos = egui::pos2((start_pos.x + end_pos.x) / 2.0, start_pos.y - 10.0);
+                        ui.painter().text(
+                            label_pos,
+                            egui::Align2::CENTER_CENTER,
+                            format!("{} ns", latency.time),
+                            egui::FontId::proportional(12.0),
+                            color,
+                        );
+                    }
+                }
+
+                for node in self.graph.node_indices() {
+                    let pos = self.positions.entry(node).or_insert(egui::pos2(50.0, 200.0));
+                    let response = ui.allocate_rect(
+                        egui::Rect::from_min_size(*pos, egui::vec2(node_size, node_height)),
+                        egui::Sense::drag(),
+                    );
+
+                    if response.dragged() {
+                        pos.x += response.drag_delta().x;
+                        pos.y += response.drag_delta().y;
+                    }
+
+                    let element_name = self.graph[node].clone();
+                    let tracing_data = logs.iter().rev().find(|e| e.element.starts_with(&element_name));
+
+                    let display_text = match tracing_data {
+                        Some(data) if data.bitrate.unwrap_or(0) >= self.bitrate_threshold
+                            && data.framerate.unwrap_or(0.0) >= self.framerate_threshold =>
+                        {
+                            format!(
+                                "{}\nBitrate: {} bps\nFramerate: {} fps",
+                                element_name,
+                                data.bitrate.unwrap_or(0),
+                                data.framerate.unwrap_or(0.0)
+                            )
+                        }
+                        _ => element_name.clone(),
+                    };
+
+                    ui.painter().rect_filled(
+                        egui::Rect::from_min_size(*pos, egui::vec2(node_size, node_height)),
+                        5.0,
+                        egui::Color32::DARK_BLUE,
+                    );
+
                     ui.painter().text(
-                        label_pos,
-                        egui::Align2::CENTER_CENTER,
-                        format!("{} ns", latency.time),
-                        egui::FontId::proportional(12.0),
-                        egui::Color32::YELLOW,
+                        egui::pos2(pos.x + 10.0, pos.y + 20.0),
+                        egui::Align2::LEFT_CENTER,
+                        display_text,
+                        egui::FontId::proportional(13.0),
+                        egui::Color32::WHITE,
                     );
                 }
-            }
-
-            for node in self.graph.node_indices() {
-                let pos = self.positions.entry(node).or_insert(egui::pos2(50.0, 200.0));
-                let response = ui.allocate_rect(
-                    egui::Rect::from_min_size(*pos, egui::vec2(node_size, node_height)),
-                    egui::Sense::drag(),
-                );
-
-                if response.dragged() {
-                    pos.x += response.drag_delta().x;
-                    pos.y += response.drag_delta().y;
-                }
-
-                let element_name = self.graph[node].clone();
-                let tracing_data = logs.iter().rev().find(|e| e.element.starts_with(&element_name));
-
-                let display_text = match tracing_data {
-                    Some(data) => format!(
-                        "{}\nBitrate: {} bps\nFramerate: {:.1} fps",
-                        element_name,
-                        data.bitrate.unwrap_or(0),
-                        data.framerate.unwrap_or(0.0)
-                    ),
-                    None => element_name.clone(),
-                };
-
-                ui.painter().rect_filled(
-                    egui::Rect::from_min_size(*pos, egui::vec2(node_size, node_height)),
-                    5.0,
-                    egui::Color32::DARK_BLUE,
-                );
-
-                ui.painter().text(
-                    egui::pos2(pos.x + 10.0, pos.y + 20.0),
-                    egui::Align2::LEFT_CENTER,
-                    display_text,
-                    egui::FontId::proportional(13.0),
-                    egui::Color32::WHITE,
-                );
-            }
-        });
+            });
 
         ctx.request_repaint();
     }
@@ -264,9 +290,14 @@ fn parse_gst_tracer_output(line: &str) -> Option<TracingData> {
 fn parse_interlatency(line: &str) -> Option<InterLatencyData> {
     let regex = Regex::new(r"interlatency.*from_pad=\(string\)(\S+), to_pad=\(string\)(\S+), time=\(string\)(\S+);").ok()?;
     let caps = regex.captures(line)?;
+
+    let mut from = caps[1].split('.').next()?.to_string().split('_').next()?.to_string();
+    from.truncate(from.len() - 1);
+    let to = caps[2].split('.').next()?.to_string().split('_').next()?.to_string();
+
     Some(InterLatencyData {
-        from: caps[1].to_string(),
-        to: caps[2].to_string(),
+        from,
+        to,
         time: caps[3].to_string(),
     })
 }

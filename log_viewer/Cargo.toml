@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-eframe = "0.26"  # Make sure this version supports what you need
+gstreamer = "0.21"
+eframe = "0.26"
 egui = "0.26"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
