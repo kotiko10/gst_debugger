@@ -17,6 +17,7 @@ struct TracingData {
     element: String,
     bitrate: Option<u64>,
     framerate: Option<f64>,
+    proctime_ns: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,22 +176,34 @@ impl eframe::App for GstDebugger {
                         pos.y += response.drag_delta().y;
                     }
 
+
                     let element_name = self.graph[node].clone();
                     let tracing_data = logs.iter().rev().find(|e| e.element.starts_with(&element_name));
 
-                    let display_text = match tracing_data {
-                        Some(data) if data.bitrate.unwrap_or(0) >= self.bitrate_threshold
-                            && data.framerate.unwrap_or(0.0) >= self.framerate_threshold =>
-                        {
-                            format!(
-                                "{}\nBitrate: {} bps\nFramerate: {} fps",
-                                element_name,
-                                data.bitrate.unwrap_or(0),
-                                data.framerate.unwrap_or(0.0)
-                            )
-                        }
-                        _ => element_name.clone(),
-                    };
+                   let display_text = match tracing_data {
+    Some(data) if data.bitrate.unwrap_or(0) >= self.bitrate_threshold
+        && data.framerate.unwrap_or(0.0) >= self.framerate_threshold =>
+    {
+        let mut text = format!(
+            "{}\nBitrate: {} bps\nFramerate: {} fps",
+            element_name,
+            data.bitrate.unwrap_or(0),
+            data.framerate.unwrap_or(0.0)
+        );
+        if let Some(proctime) = data.proctime_ns {
+            text.push_str(&format!("\nProcTime: {} ns", proctime));
+        }
+        text
+    }
+    Some(data) => {
+        let mut text = element_name.clone();
+        if let Some(proctime) = data.proctime_ns {
+            text.push_str(&format!("\nProcTime: {} ns", proctime));
+        }
+        text
+    }
+    None => element_name.clone(),
+};
 
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(*pos, egui::vec2(node_size, node_height)),
@@ -282,24 +295,59 @@ async fn run_pipeline_with_tracing(
 fn parse_gst_tracer_output(line: &str) -> Option<TracingData> {
     let bitrate_re = Regex::new(r"bitrate.*pad=\(string\)(\S+), bitrate=\(guint64\)(\d+);").ok()?;
     let framerate_re = Regex::new(r"framerate.*pad=\(string\)(\S+), fps=\(uint\)(\d+);").ok()?;
+    let proctime_re = Regex::new(r"proc_time, element=\(string\)(\S+), time=\(string\)(\S+);").ok()?;
 
-    if let Some(caps) = bitrate_re.captures(line) {
-        return Some(TracingData {
-            element: caps[1].to_string(),
-            bitrate: Some(caps[2].parse().ok()?),
-            framerate: None,
-        });
-    }
+   if let Some(caps) = bitrate_re.captures(line) {
+    return Some(TracingData {
+        element: extract_element_name(&caps[1]),
+        bitrate: Some(caps[2].parse().ok()?),
+        framerate: None,
+        proctime_ns: None,
+    });
+}
 
-    if let Some(caps) = framerate_re.captures(line) {
-        return Some(TracingData {
-            element: caps[1].to_string(),
-            bitrate: None,
-            framerate: Some(caps[2].parse().ok()?),
-        });
+if let Some(caps) = framerate_re.captures(line) {
+    return Some(TracingData {
+        element: extract_element_name(&caps[1]),
+        bitrate: None,
+        framerate: Some(caps[2].parse().ok()?),
+        proctime_ns: None,
+    });
+}
+
+    if let Some(caps) = proctime_re.captures(line) {
+        let element = extract_element_name(&caps[1]);
+        let time_str = &caps[2];
+
+        if let Some(ns) = parse_duration_to_ns(time_str) {
+            return Some(TracingData {
+                element,
+                bitrate: None,
+                framerate: None,
+                proctime_ns: Some(ns),
+            });
+        }
     }
 
     None
+}
+
+fn parse_duration_to_ns(time_str: &str) -> Option<u64> {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let hours = parts[0].parse::<u64>().ok()?;
+    let minutes = parts[1].parse::<u64>().ok()?;
+    let secs_frac: Vec<&str> = parts[2].split('.').collect();
+    let seconds = secs_frac.get(0)?.parse::<u64>().ok()?;
+    let nanoseconds = secs_frac.get(1).unwrap_or(&"0").parse::<u64>().ok()?;
+
+    Some(hours * 3_600_000_000_000
+        + minutes * 60_000_000_000
+        + seconds * 1_000_000_000
+        + nanoseconds)
 }
 
 fn parse_interlatency(line: &str) -> Option<InterLatencyData> {
@@ -315,4 +363,8 @@ fn parse_interlatency(line: &str) -> Option<InterLatencyData> {
         to,
         time: caps[3].to_string(),
     })
+}
+
+fn extract_element_name(pad_name: &str) -> String {
+    pad_name.split('_').next().unwrap_or(pad_name).to_string()
 }
