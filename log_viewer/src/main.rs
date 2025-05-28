@@ -179,8 +179,10 @@ impl eframe::App for GstDebugger {
 
                     let element_name = self.graph[node].clone();
                     let tracing_data = logs.iter().rev().find(|e| e.element.starts_with(&element_name));
+                    let interlatency_data = inter.iter().rev().find(|lat| lat.from.starts_with(&element_name));
 
-                   let display_text = match tracing_data {
+
+                 let mut display_text = match tracing_data {
     Some(data) if data.bitrate.unwrap_or(0) >= self.bitrate_threshold
         && data.framerate.unwrap_or(0.0) >= self.framerate_threshold =>
     {
@@ -204,7 +206,6 @@ impl eframe::App for GstDebugger {
     }
     None => element_name.clone(),
 };
-
                     ui.painter().rect_filled(
                         egui::Rect::from_min_size(*pos, egui::vec2(node_size, node_height)),
                         5.0,
@@ -354,7 +355,7 @@ fn parse_interlatency(line: &str) -> Option<InterLatencyData> {
     let regex = Regex::new(r"interlatency.*from_pad=\(string\)(\S+), to_pad=\(string\)(\S+), time=\(string\)(\S+);").ok()?;
     let caps = regex.captures(line)?;
 
-    let mut from = caps[1].split('.').next()?.to_string().split('_').next()?.to_string();
+    let mut from = extract_element_name(&caps[1]);
     from.truncate(from.len() - 1);
     let to = caps[2].split('.').next()?.to_string().split('_').next()?.to_string();
 
