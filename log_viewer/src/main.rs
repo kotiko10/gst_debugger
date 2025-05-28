@@ -60,12 +60,25 @@ impl GstDebugger {
         let mut node_map = HashMap::new();
         let mut positions = HashMap::new();
 
-        let elements: Vec<&str> = pipeline.split("!").map(|s| s.trim()).collect();
+       let elements: Vec<String> = pipeline
+    .split('!')
+    .map(|s| {
+        let trimmed = s.trim();
+        let first_token = trimmed.split_whitespace().next().unwrap_or(trimmed);
+
+        if let Some(eq_index) = first_token.find('=') {
+            first_token[eq_index + 1..].to_string()
+        } else {
+            first_token.to_string()
+        }
+    })
+    .collect();
+
         let mut prev_node = None;
         let mut x = 50.0;
         let y = 200.0;
 
-        for &element in &elements {
+        for element in &elements {
             let node = graph.add_node(element.to_string());
             node_map.insert(element.to_string(), node);
             positions.insert(node, egui::pos2(x, y));
